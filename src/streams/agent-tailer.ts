@@ -19,12 +19,26 @@ import { updateStreamComment } from '../github/comment-stream.js';
 interface TailState {
   lastSeen: string;
   streamTo: string | null;
+  /**
+   * Signatures of tags recently acted on, mapped to the unix-second
+   * they fired. Any signature already in the map within
+   * TAG_DEDUPE_WINDOW is silently skipped — prevents re-firing the
+   * same tag while it lingers in the tmux pane history.
+   */
+  recentTags: Map<string, number>;
 }
+
+const TAG_DEDUPE_WINDOW_SECONDS = 300; // 5 min
 
 const state = new Map<string, TailState>();
 
 export function registerTail(keyObj: SessionKey, streamTo: string | null): void {
-  state.set(keyToString(keyObj), { lastSeen: '', streamTo });
+  const existing = state.get(keyToString(keyObj));
+  state.set(keyToString(keyObj), {
+    lastSeen: existing?.lastSeen ?? '',
+    streamTo,
+    recentTags: existing?.recentTags ?? new Map(),
+  });
 }
 
 export function unregisterTail(keyObj: SessionKey): void {
@@ -43,10 +57,28 @@ function parseTagAttrs(s: string | undefined): Record<string, string> {
 }
 
 async function handleTags(keyObj: SessionKey, newText: string): Promise<void> {
+  const sessionKey = keyToString(keyObj);
+  const st = state.get(sessionKey);
+  if (!st) return;
+  const now = Math.floor(Date.now() / 1000);
+  // Age out old entries to keep the dedupe map small.
+  for (const [sig, at] of st.recentTags) {
+    if (now - at > TAG_DEDUPE_WINDOW_SECONDS) st.recentTags.delete(sig);
+  }
+
   for (const m of newText.matchAll(TAG_RE)) {
     const tag = m[1]!;
     const attrs = parseTagAttrs(m[2]);
-    const sessionKey = keyToString(keyObj);
+    // Dedupe key combines tag + sorted attrs — the `continue` tag
+    // carries no attrs so all repeats collapse; `handoff` with a
+    // different workflow/scope is considered distinct.
+    const sortedAttrs = Object.keys(attrs)
+      .sort()
+      .map((k) => `${k}=${attrs[k]}`)
+      .join('|');
+    const sig = `${tag}::${sortedAttrs}`;
+    if (st.recentTags.has(sig)) continue;
+    st.recentTags.set(sig, now);
     log.info({ sessionKey, tag, attrs }, 'agent signal tag');
 
     switch (tag) {
