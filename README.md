@@ -1,10 +1,16 @@
 # AgentHive
 
+> ## ⚠️ Work in progress — not tested end-to-end yet
+>
+> The architecture and code compile and boot, but the full
+> GitHub → router → AgentCore → agent-works-on-a-real-PR
+> path has not been run against a live repo yet. Prompts,
+> stop-hook semantics, and container spawn details may still
+> change. Don't rely on this for anything important.
+
 Persistent AI agents triggered by GitHub events. You write YAML
 workflow files in your repo; AgentHive spawns long-lived Claude
 Code containers that loop until the job is done.
-
-> Status: WIP. First end-to-end test pending.
 
 ## Parts
 
