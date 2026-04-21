@@ -34,7 +34,13 @@ services:
       - ./examples:/app/examples:ro
       - ./hooks-lib:/app/hooks-lib:ro
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:7700/health"]
+      # Use node (already present) rather than wget (which isn't in
+      # the slim base image). Small fetch that exits 0 on 2xx.
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:7700/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
       interval: 30s
       timeout: 5s
       retries: 3
