@@ -257,9 +257,12 @@ export async function sendMessage(
   body: string,
 ): Promise<{ ok: boolean; status: number; text: string }> {
   const ensure = await ensureSession(keyObj);
-  if (ensure.justSpawned) {
-    await waitForHealth(ensure.controlApiUrl, 45_000).catch(() => undefined);
-  }
+  // Always probe health — idempotent when the API is already up,
+  // and handles the race where `ensureSession` returned a running
+  // container whose control API is still booting (e.g. when the
+  // dispatcher spawned eagerly and the inbox worker races the
+  // agent's startup sequence).
+  await waitForHealth(ensure.controlApiUrl, 45_000).catch(() => undefined);
 
   const esc = body.replace(/'/g, "'\\''");
   const cmd =
@@ -281,6 +284,9 @@ export async function sendMessage(
 
 export async function getLogs(keyObj: SessionKey, lines = 200): Promise<string> {
   const ensure = await ensureSession(keyObj);
+  // Same treatment as sendMessage — probe before /logs too, else
+  // the admin `/sessions/:key/logs` endpoint can race a fresh spawn.
+  await waitForHealth(ensure.controlApiUrl, 30_000).catch(() => undefined);
   const resp = await fetch(`${ensure.controlApiUrl}/logs?lines=${lines}`, {
     headers: { Authorization: `Bearer ${config.DISPATCH_TOKEN}` },
   });
