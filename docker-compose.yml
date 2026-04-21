@@ -22,6 +22,11 @@ services:
       - agenthive-net
     environment:
       NODE_ENV: production
+      # Tells the router what host-side path `~/.claude` resolves to,
+      # so it can re-use that path when bind-mounting into session
+      # containers. `${HOME}` is expanded by compose at `up` time from
+      # the invoking shell's env.
+      HOST_HOME: ${HOME:-}
     env_file:
       - .env
     volumes:
@@ -33,6 +38,13 @@ services:
       # Example workflows + shared hook library.
       - ./examples:/app/examples:ro
       - ./hooks-lib:/app/hooks-lib:ro
+      # Host Claude Code credentials. `${HOME}/.claude` is where the
+      # Claude CLI stores Max-subscription OAuth creds on Linux,
+      # macOS, and Windows Docker Desktop (when run from git bash).
+      # Auto-detected inside the router; the host path is re-used
+      # when spawning session containers so they see the same creds.
+      # Skip if you'd rather use ANTHROPIC_API_KEY.
+      - ${HOME}/.claude:/host-claude:ro
     healthcheck:
       # Use node (already present) rather than wget (which isn't in
       # the slim base image). Small fetch that exits 0 on 2xx.

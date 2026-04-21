@@ -57,19 +57,27 @@ function credentialsExist(claudeDir: string): boolean {
  * Convert `C:\Users\<you>\.claude` → `//c/Users/<you>/.claude`
  * (Docker Desktop's canonical host path form). Also accepts
  * already-translated paths and leaves them alone.
+ *
+ * Triggers on the path's SHAPE, not the router's own platform —
+ * when the router runs as a Linux container on a Windows host
+ * (Docker Desktop), `process.platform === 'linux'` but the paths
+ * it handles are Windows paths fed in via env vars. So "is this a
+ * Windows path?" is what matters, not "am I on Windows?".
  */
 function toDockerHostPath(p: string): { path: string; translated: boolean } {
-  if (process.platform !== 'win32') return { path: p, translated: false };
-  // Already Docker-form.
+  // Already Docker Desktop form — leave alone.
   if (/^\/\/[a-z]\//i.test(p)) return { path: p, translated: false };
-  // Drive-letter Windows path.
+  // Drive-letter Windows path, with backslashes OR forward slashes
+  // after the colon (compose sometimes mixes them).
   const m = /^([a-z]):[\\/]+(.*)$/i.exec(p);
   if (m) {
     const drive = m[1]!.toLowerCase();
     const rest = m[2]!.replace(/\\/g, '/');
     return { path: `//${drive}/${rest}`, translated: true };
   }
-  return { path: p.replace(/\\/g, '/'), translated: true };
+  // Plain POSIX path — only normalise backslashes if any sneaked in.
+  if (p.includes('\\')) return { path: p.replace(/\\/g, '/'), translated: true };
+  return { path: p, translated: false };
 }
 
 export function detectClaudeAuth(opts?: {
@@ -92,19 +100,22 @@ export function detectClaudeAuth(opts?: {
     };
   }
 
-  // 2. Router running inside a container with host home mounted.
-  if (hostHome) {
+  // 2. Router running inside a container with host ~/.claude bind-
+  // mounted at /host-claude (see docker-compose.yml). Detection
+  // strategy: check for creds at the CONTAINER-visible mount point
+  // but return the HOST-side path so sibling containers can bind
+  // the same dir. Requires HOST_HOME to be set by compose.
+  const containerMount = '/host-claude';
+  if (hostHome && credentialsExist(containerMount)) {
     const cand = path.join(hostHome, '.claude');
-    if (credentialsExist(cand)) {
-      const t = toDockerHostPath(cand);
-      return {
-        hostPath: t.path,
-        source: 'host-mount',
-        hasCredentials: true,
-        platform,
-        windowsTranslated: t.translated,
-      };
-    }
+    const t = toDockerHostPath(cand);
+    return {
+      hostPath: t.path,
+      source: 'host-mount',
+      hasCredentials: true,
+      platform,
+      windowsTranslated: t.translated,
+    };
   }
 
   // 3. Current user's home directory.
