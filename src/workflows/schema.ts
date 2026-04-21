@@ -65,13 +65,23 @@ export const WorkflowSchema = z.object({
   // → block stop, inject stdout as the next user message.
   stop_when: z.string().optional(),
 
-  // Slash-command entry point. Set to `manual` to allow
-  // `/ai <workflow-name> <message>` from operators.
+  // Slash-command entry point. Set to `code` / `test` / ... to
+  // allow `/ai <value> <message>` from operators.
   slash: z.string().optional(),
 
-  // Operator allowlist (GitHub usernames). Applies to the `slash`
-  // trigger. Empty = anyone with write access on the repo.
+  // Operator allowlist (GitHub usernames). Applies to the slash
+  // command trigger only. Empty list does NOT mean "anyone" — see
+  // `open:` below. Useful for whitelisting specific bots or
+  // external collaborators who aren't otherwise MEMBERs.
   operators: z.array(z.string()).default([]),
+
+  // By default, slash commands require the commenter's GitHub
+  // `author_association` to be one of: OWNER, MEMBER, COLLABORATOR.
+  // Set `open: true` to allow anyone who can leave a comment on
+  // the repo to invoke this workflow via `/ai ...`. Only enable
+  // this for workflows where an outsider triggering it is harmless
+  // — they consume API quota and the shared PAT's permissions.
+  open: z.boolean().default(false),
 });
 
 export type Workflow = z.infer<typeof WorkflowSchema>;

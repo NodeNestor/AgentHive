@@ -61,6 +61,32 @@ AgentHive/
 └── Dockerfile
 ```
 
+## Access control
+
+Defense-in-depth against stranger abuse — especially relevant for
+public repos:
+
+- **Webhook endpoint** — HMAC-SHA256 verified. Only GitHub (or
+  someone with `WEBHOOK_SECRET`) can POST.
+- **Admin endpoints** (`/dispatch`, `/sessions/*`, etc.) — bearer
+  `DISPATCH_TOKEN` required.
+- **Workflow definitions** — fetched from the default branch only,
+  never from a PR's head. A hostile PR adding a new
+  `.agents/workflows/*.yml` has no effect until merged (and merging
+  is GitHub's permission system, not ours).
+- **Slash commands** — by default require commenter's
+  `author_association` to be OWNER / MEMBER / COLLABORATOR.
+  Non-collaborators posting `/ai code ...` on your issue are
+  silently rejected. Override per workflow:
+  - `operators: [username, ...]` — allowlist specific extra users.
+  - `open: true` — accept from anyone (only use for harmless verbs).
+- **Session-level verbs** (`/ai stop`, `/ai status`, ...) — always
+  require trusted association. No per-workflow override.
+
+Trusted association + shared secret is the whole auth model. For
+multi-org SaaS you'd want a GitHub App per tenant (interface in
+`src/github/app.ts` is shaped for it, not wired yet).
+
 See `CLAUDE.md` for per-file notes.
 
 MIT.

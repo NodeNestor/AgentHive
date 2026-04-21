@@ -29,6 +29,15 @@ export interface EventContext {
   tenant: string; // "owner/repo" or "owner"
   actor: string;
 
+  // GitHub `author_association` of the actor — OWNER, MEMBER,
+  // COLLABORATOR, CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR, NONE.
+  // Available in `if:` expressions as `association`.
+  association?: string;
+  // Convenience: true when association ∈ {OWNER, MEMBER, COLLABORATOR}.
+  // Workflows that trigger on stranger-controllable events (comments,
+  // PRs from forks) should gate on `isTrustedActor`.
+  isTrustedActor: boolean;
+
   // Event-specific fields exposed to templates + `if:` expressions.
   label?: string;
   state?: string;
@@ -150,11 +159,23 @@ export function ctxFromGithub(eventName: string, payload: any): EventContext {
   const repo = payload?.repository?.full_name;
   const actor = payload?.sender?.login ?? 'unknown';
 
+  const association =
+    payload?.comment?.author_association ??
+    payload?.issue?.author_association ??
+    payload?.pull_request?.author_association ??
+    payload?.review?.author_association ??
+    undefined;
+  const trustedAssociations = ['OWNER', 'MEMBER', 'COLLABORATOR'];
+  const isTrustedActor =
+    !!association && trustedAssociations.includes(association);
+
   const ctx: EventContext = {
     event: eventName,
     action,
     tenant: repo ?? payload?.organization?.login ?? 'unknown',
     actor,
+    association,
+    isTrustedActor,
     raw: payload,
   };
 
