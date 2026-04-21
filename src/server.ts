@@ -251,12 +251,23 @@ async function handleSlashCommand(
   const streamTo = issueNumber ? `${isPullRequest ? 'pr' : 'issue'}:${issueNumber}` : null;
   const actor = payload?.sender?.login;
 
+  // Author association check — default-deny untrusted commenters.
+  const association: string | undefined = payload?.comment?.author_association;
+  const TRUSTED = ['OWNER', 'MEMBER', 'COLLABORATOR'];
+  const isTrusted = !!association && TRUSTED.includes(association);
+
   if (cmd.kind === 'workflow') {
     const workflows = await loadWorkflows(tenant);
     const wf = workflows.find((w) => w.slash === cmd.workflow || w.name === cmd.workflow);
     if (!wf) return false;
-    if (wf.operators.length > 0 && !wf.operators.includes(actor ?? '')) {
-      log.info({ actor, workflow: wf.name }, 'slash blocked — not an operator');
+
+    const explicitlyListed = wf.operators.includes(actor ?? '');
+    const allowed = wf.open || explicitlyListed || isTrusted;
+    if (!allowed) {
+      log.info(
+        { actor, association, workflow: wf.name },
+        'slash blocked — untrusted actor; add to operators:, set open:true, or fire as OWNER/MEMBER/COLLABORATOR',
+      );
       return false;
     }
     const scope = scopeFor(wf.scope, {
@@ -291,10 +302,13 @@ async function handleSlashCommand(
     return true;
   }
 
-  // stop / status / logs / retry are session-level meta messages.
+  // stop / status / logs / retry are session-level meta messages —
+  // also gate on trusted association, no per-workflow override.
+  if (!isTrusted) {
+    log.info({ actor, association, verb: cmd.kind }, 'meta slash blocked — untrusted actor');
+    return false;
+  }
   if (!issueNumber) return false;
-  // Can't know which workflow to target without more info — inject
-  // the meta message into *all* workflows that use this scope.
   const workflows = await loadWorkflows(tenant);
   let routed = 0;
   for (const wf of workflows) {
