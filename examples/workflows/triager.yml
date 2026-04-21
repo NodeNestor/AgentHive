@@ -59,8 +59,12 @@ trigger_prompt: |
   Triage it and move on.
 
 stop_when: |
-  all=$(gh issue list --repo "$AGENT_TENANT" --state open --json number,labels --limit 50 || echo '[]')
-  untriaged=$(echo "$all" | jq -c '[.[] | select(all(.labels[]; (.name | startswith("ai:")) | not))]')
+  # Fetch all open issues via the lib.sh helper (curl-based, no gh CLI).
+  all=$(curl -sSf --max-time 10 \
+    -H "Accept: application/vnd.github+json" \
+    -H "Authorization: Bearer ${GITHUB_TOKEN:-}" \
+    "${GH_API}/repos/${AGENT_TENANT}/issues?state=open&per_page=50" 2>/dev/null || echo '[]')
+  untriaged=$(echo "$all" | jq -c '[.[] | select([.labels[]?.name] | all(. | startswith("ai:") | not))]')
   count=$(echo "$untriaged" | jq 'length')
   if [ "$count" -gt 0 ]; then
     next=$(echo "$untriaged" | jq -r '.[0].number')
