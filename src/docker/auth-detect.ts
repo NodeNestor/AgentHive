@@ -54,7 +54,7 @@ function credentialsExist(claudeDir: string): boolean {
 }
 
 /**
- * Convert `C:\Users\nestor\.claude` → `//c/Users/nestor/.claude`
+ * Convert `C:\Users\<you>\.claude` → `//c/Users/<you>/.claude`
  * (Docker Desktop's canonical host path form). Also accepts
  * already-translated paths and leaves them alone.
  */
