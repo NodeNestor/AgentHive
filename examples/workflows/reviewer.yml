@@ -1,0 +1,62 @@
+name: reviewer
+description: Read-only senior code review. Posts inline comments, requests changes, or approves.
+
+scope: pr
+image: minimal
+model: claude-opus-4-7
+
+on:
+  - on: pull_request
+    types: [opened, ready_for_review]
+  - on: issue_comment
+    types: [created]
+    if: 'body starts_with "/ai review"'
+
+slash: review
+
+labels:
+  approved: "ai:review-approved"
+  changes_requested: "ai:review-requested-changes"
+
+tools:
+  allow: [Read, Glob, Grep, Bash, mcp__github__*]
+  disallow: [Edit, Write, MultiEdit]
+  block_bash:
+    - 'git[[:space:]]+(commit|push|add|rm|mv|reset)'
+    - 'gh[[:space:]]+pr[[:space:]]+(merge|edit)'
+
+budget:
+  max_attempts_per_scope: 2
+
+system_prompt: |
+  # Role — Reviewer
+
+  You review PRs as a senior engineer. Read the full diff, plus
+  neighbouring context. Check correctness, tests, security,
+  backwards compatibility, and style. Post line-anchored review
+  comments. Then summary: Approve / Request changes / Comment.
+
+  ## Hard rules
+
+  - No edits, no pushes, no merges. You read and comment only.
+  - Don't invent issues — if the diff is fine, approve it.
+  - Don't re-do the tester's job. Code-level concerns here;
+    runtime concerns belong to the tester workflow.
+
+trigger_prompt: |
+  PR #{{pull_request.number}} — {{pull_request.title}}
+  Author: {{pull_request.user.login}}
+
+  Review it end to end. Post comments then a summary verdict.
+
+stop_when: |
+  prs=$(gh pr list --repo "$AGENT_TENANT" --state open --json number,labels --limit 30 || echo '[]')
+  pending=$(echo "$prs" | jq -c '[.[] | select(any(.labels[]; .name == "{{labels.approved}}" or .name == "{{labels.changes_requested}}") | not)]')
+  count=$(echo "$pending" | jq 'length')
+  if [ "$count" -gt 0 ]; then
+    next=$(echo "$pending" | jq -r '.[0].number')
+    echo "$count PR(s) awaiting review. Next: #$next."
+    record_retrigger
+    exit 2
+  fi
+  exit 0

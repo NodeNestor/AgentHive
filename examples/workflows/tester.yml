@@ -1,0 +1,99 @@
+name: tester
+description: Test PR preview deploys like a human QA using Playwright. Drives a persistent, pre-logged-in Chrome profile.
+
+scope: pr
+image: ubuntu            # Playwright + Chrome live here
+model: claude-sonnet-4-6
+requires_desktop: false  # headless via Xvfb; set true to attach via noVNC
+
+on:
+  - on: deployment_status
+    if: 'state == "success"'
+  - on: pull_request
+    types: [opened, synchronize]
+  - on: issues
+    types: [labeled]
+    if: 'label == "ai:testing"'
+
+slash: test
+
+labels:
+  needs_test: "ai:testing"
+  passed: "ai:tested"
+  failed: "ai:test-failed"
+  needs_fix: "ai:needs-fix"
+  queued: "ai:queued"
+
+tools:
+  allow: [Read, Bash, TodoWrite, mcp__playwright__*, mcp__github__*]
+  disallow: [Edit, Write, MultiEdit]
+  block_bash:
+    - 'git[[:space:]]+(commit|push|add|rm|mv|reset|revert|cherry-pick|rebase)'
+    - 'gh[[:space:]]+pr[[:space:]]+(merge|edit)'
+    - 'gh[[:space:]]+release[[:space:]]+create'
+
+budget:
+  max_attempts_per_scope: 5
+  max_tokens_per_task: 80000
+
+system_prompt: |
+  # Role — Tester
+
+  You are a QA tester. You drive a real Chrome via Playwright MCP
+  against the PR's preview URL. The profile is pre-logged-in and
+  pre-dismissed of cookie banners — don't re-accept them.
+
+  ## Per-PR workflow
+
+  1. For each issue the PR claims to close: repro the bug *and*
+     verify the fix. Take before/after screenshots.
+  2. If the PR description mentions a regression risk, test that
+     path too.
+  3. Apply labels:
+     - All issues pass → `{{labels.passed}}` on each issue.
+     - Any fail → `{{labels.failed}}` + `{{labels.needs_fix}}` on
+       the failing issue, then re-label `{{labels.queued}}` so the
+       coder picks it up again.
+  4. Post a PR comment with per-issue pass/fail + screenshots + a
+     JSON verdict block.
+
+  ## Hard rules
+
+  - Read-only repo access. Never edit code.
+  - Screenshots are evidence — every verdict has at least one.
+  - No flaky retries. If a step is intermittent, that's a fail.
+
+  ## Verdict schema (end of your PR comment)
+
+  ```json
+  {
+    "pr": <number>,
+    "verdict": "APPROVED" | "NEEDS_FIXES" | "INCONCLUSIVE",
+    "issues": [
+      { "number": <n>, "pass": true|false, "evidence": "...", "failure": "..." }
+    ],
+    "feelings": { "confidence": "high|medium|low", "notes": "..." }
+  }
+  ```
+
+trigger_prompt: |
+  Event: {{event}}.{{action}} (by {{actor}})
+  PR #{{pull_request.number}} — {{pull_request.title}}
+  Preview URL: {{deploymentUrl}}
+
+  Run the PR-specific tests plus any regression risks mentioned in
+  the PR body. Post your verdict and apply labels.
+
+stop_when: |
+  # Any PRs still marked needs_test without a verdict?
+  pending=$(issues_with_label '{{labels.needs_test}}' | jq -c \
+    '[.[] | select(any(.labels[]; .name == "{{labels.passed}}") | not)
+          | select(any(.labels[]; .name == "{{labels.failed}}") | not)]')
+  count=$(echo "$pending" | jq 'length')
+  if [ "$count" -gt 0 ]; then
+    next=$(echo "$pending" | jq -r '.[0].number')
+    echo "$count PR(s) awaiting test verdict. Next: #$next."
+    record_retrigger
+    exit 2
+  fi
+  exit 0
