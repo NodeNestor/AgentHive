@@ -16,3 +16,5 @@ Thumbs.db
 coverage/
 .vscode/
 .idea/
+TEST-REPORT.md
+tests/*.sqlite*
