@@ -1,0 +1,125 @@
+name: coder
+description: Take queued issues all the way to a tested PR, looping until the board is clean.
+
+scope: issue
+image: minimal
+model: claude-opus-4-7
+
+on:
+  - on: issues
+    types: [labeled]
+    if: 'label == "ai:queued"'
+  - on: pull_request_review
+    types: [submitted]
+    if: 'state == "changes_requested"'
+
+slash: code
+
+labels:
+  queued: "ai:queued"
+  in_progress: "ai:implementing"
+  done: "ai:implemented"
+  handoff: "ai:testing"
+  blocked: "ai:blocked"
+
+tools:
+  allow: [Read, Edit, Write, Glob, Grep, Bash, TodoWrite, mcp__github__*]
+  block_bash:
+    - 'git push[[:space:]]+.*--force'
+    - 'git push[[:space:]]+-f\b'
+    - 'git push[[:space:]]+\S+[[:space:]]+(main|master)(\b|:)'
+    - 'git[[:space:]]+(commit|push).*--no-verify'
+    - '^\s*sudo\b'
+    - 'rm[[:space:]]+(-[rRf]+[[:space:]]+)?(/|\$HOME)'
+    - 'git[[:space:]]+remote[[:space:]]+(add|set-url)'
+  block_edit:
+    - '*.github/workflows/*'
+    - '*.agents/*'
+    - '*.claude/settings.json'
+    - '*.env'
+    - '*.env.*'
+    - '*/credentials/*'
+    - '*.pem'
+
+budget:
+  max_attempts_per_scope: 3
+  max_tokens_per_task: 200000
+
+system_prompt: |
+  # Role — Coder
+
+  You are a senior software engineer working as a persistent agent.
+  Your job is to take each issue labeled `{{labels.queued}}` to a
+  tested pull request.
+
+  ## Hard rules
+
+  - Never force-push, never skip hooks (`--no-verify`), never push
+    directly to `main`/`master`.
+  - Never edit `.github/workflows/`, `.agents/`, or any env or
+    credential file.
+  - Never commit secrets.
+
+  ## Per-issue workflow
+
+  1. Read the issue. Form a hypothesis by looking at the code.
+  2. Move the issue label from `{{labels.queued}}` to
+     `{{labels.in_progress}}`.
+  3. Branch: `agenthive/issue-<N>-<short-slug>`.
+  4. Implement. Small, focused diffs. Tests first where possible.
+  5. Run the repo's test suite locally. Fix anything red.
+  6. Open a PR — title `<type>(<scope>): <summary>`, body with
+     summary + test plan.
+  7. Apply labels `{{labels.done}}` then `{{labels.handoff}}`
+     (the `{{labels.handoff}}` label triggers the tester workflow).
+  8. Post one short comment on the issue linking the PR.
+
+  ## When blocked
+
+  If you need info that's not in the repo, or the issue is
+  ambiguous, add `{{labels.blocked}}` with a short comment
+  explaining what you need, and stop.
+
+  ## Stopping
+
+  The Stop hook decides whether you're done. If the board has any
+  queued work or anything stuck mid-state, it'll push you to
+  continue. Don't fight it.
+
+trigger_prompt: |
+  Event: {{event}}.{{action}} (by {{actor}})
+  Issue #{{issue.number}}: {{issue.title}}
+
+  {{issue.body}}
+
+  Pick it up.
+
+stop_when: |
+  # Work left in intermediate state?
+  stuck=$(issues_with_but_without_label '{{labels.in_progress}}' '{{labels.handoff}}')
+  if [ "$(echo "$stuck" | jq 'length')" -gt 0 ]; then
+    n=$(echo "$stuck" | jq -r '.[0].number')
+    echo "Issue #$n is '{{labels.in_progress}}' but not yet '{{labels.handoff}}'."
+    echo "Either finish handoff by adding '{{labels.handoff}}', or add '{{labels.blocked}}' with a reason."
+    record_retrigger
+    exit 2
+  fi
+
+  # New queued work?
+  queued=$(issues_with_label '{{labels.queued}}')
+  if [ "$(echo "$queued" | jq 'length')" -gt 0 ]; then
+    if ! check_issue_budget "${MAX_ATTEMPTS_PER_SCOPE:-3}"; then
+      echo "Budget exhausted for this scope — add '{{labels.blocked}}' and stop."
+      record_retrigger
+      exit 2
+    fi
+    num=$(echo "$queued" | jq -r '.[0].number')
+    title=$(echo "$queued" | jq -r '.[0].title')
+    echo "Work queued — $(echo "$queued" | jq 'length') issue(s) need implementation."
+    echo "Next: #$num — $title"
+    echo "Start by moving it to '{{labels.in_progress}}' and branching."
+    record_retrigger
+    exit 2
+  fi
+
+  exit 0

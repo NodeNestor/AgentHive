@@ -1,0 +1,33 @@
+name: AgentHive Dispatch
+description: Forward the current GitHub event to an AgentHive router.
+inputs:
+  url:
+    description: Router URL (e.g. https://agents.nodenestor.dev).
+    required: true
+  secret:
+    description: HMAC shared secret; must match the router's WEBHOOK_SECRET.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Forward event to AgentHive
+      shell: bash
+      env:
+        AGENTHIVE_URL: ${{ inputs.url }}
+        AGENTHIVE_SECRET: ${{ inputs.secret }}
+        EVENT_NAME: ${{ github.event_name }}
+        PAYLOAD_PATH: ${{ github.event_path }}
+      run: |
+        set -euo pipefail
+        if [ -z "${AGENTHIVE_URL:-}" ]; then
+          echo "AGENTHIVE_URL not set — skipping."
+          exit 0
+        fi
+        SIG="sha256=$(openssl dgst -sha256 -hmac "$AGENTHIVE_SECRET" -r < "$PAYLOAD_PATH" | awk '{print $1}')"
+        curl -sSf --max-time 20 \
+          -H "X-GitHub-Event: $EVENT_NAME" \
+          -H "X-Hub-Signature-256: $SIG" \
+          -H "Content-Type: application/json" \
+          --data-binary "@$PAYLOAD_PATH" \
+          "$AGENTHIVE_URL/webhook/github" \
+          || { echo "Router call failed (continuing)."; exit 0; }

@@ -1,0 +1,33 @@
+# Drop this into any consumer repo as .github/workflows/ai.yml.
+# This is the ENTIRE integration — one file. Agents are defined
+# separately in .agents/workflows/*.yml in the same repo.
+#
+# Required repo/org settings:
+#   Variable AGENTHIVE_URL    — your router's public URL
+#   Secret   AGENTHIVE_SECRET — matches the router's WEBHOOK_SECRET
+
+name: AgentHive
+on:
+  issues:
+    types: [opened, reopened, labeled]
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+  issue_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  deployment_status:
+
+concurrency:
+  group: agenthive-${{ github.event.issue.number || github.event.pull_request.number || github.sha }}
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    if: ${{ github.actor != 'agenthive-bot' }}
+    timeout-minutes: 2
+    steps:
+      - uses: NodeNestor/AgentHive/.github/actions/dispatch@main
+        with:
+          url: ${{ vars.AGENTHIVE_URL }}
+          secret: ${{ secrets.AGENTHIVE_SECRET }}
