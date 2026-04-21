@@ -38,6 +38,7 @@ import { parseSlashCommand } from './github/slash-commands.js';
 import { startInboxWorker } from './workers/inbox-worker.js';
 import { startWatchdog } from './workers/watchdog.js';
 import { startTailLoop, registerTail } from './streams/agent-tailer.js';
+import { stringToKey as strToKey } from './router/session-key.js';
 import {
   getWorkflow,
   listLocalExampleWorkflows,
@@ -338,7 +339,34 @@ async function handleSlashCommand(
 type SlashCommand = ReturnType<typeof parseSlashCommand> & object;
 
 // ── Boot ──────────────────────────────────────────────────────────
+/**
+ * Re-register tails for all sessions that were running when we
+ * shut down. Without this, after a router restart the tailer has
+ * no idea which containers to poll, and:
+ *   - signal tags emitted by the agent are ignored
+ *   - comment streams stop updating until the next webhook arrives
+ *
+ * We don't persist `stream_to` on the session row, so first-pass
+ * we register with stream_to=null (signal tags still work). The
+ * next inbox message delivered will upgrade the registration with
+ * the correct stream target.
+ */
+function rehydrateTails(): void {
+  let count = 0;
+  for (const s of listSessions()) {
+    if (s.status !== 'running' || !s.container_id) continue;
+    try {
+      registerTail(strToKey(s.key), null);
+      count++;
+    } catch (err) {
+      log.warn({ err, key: s.key }, 'failed to re-register tail on startup');
+    }
+  }
+  if (count > 0) log.info({ count }, 're-registered tails for running sessions');
+}
+
 export function start(): void {
+  rehydrateTails();
   startInboxWorker();
   startTailLoop();
   startWatchdog();
